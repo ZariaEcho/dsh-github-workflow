@@ -1,0 +1,47 @@
+# Local test composition for dsh-github-workflow.
+#
+# Apply this file as an overlay over an existing profile, e.g.:
+#
+#   dsh --profile <profile> --patch ./examples/cordis.yml
+#
+# Requirements:
+# 1. The plugin package must be resolvable from the profile's plugin
+#    resolution: `npm run build` here, then either
+#      dsh plugin --profile <profile> add /path/to/dsh-github-workflow
+#    or a package-manager link into the environment that boots the profile.
+# 2. The token must be reachable through the credentials seam: export
+#    GITHUB_TOKEN (or write it into $DSH_HOME/.credentials.yaml).
+#
+# This file only adds the rows the plugin needs. In a real profile the same
+# rows already exist (or the plugin row can be added to the agent preset).
+
+# Credential store: resolves `GITHUB_TOKEN` per call (env → .credentials.yaml
+# → .env), so no token is inlined here.
+- id: credentials
+  name: '@deepseek-ai/dsh-credentials-local'
+
+# Approval stack: mutating tools (gh_create_draft_pr, gh_review_pr post:true)
+# ask the user by default. `policy: never` auto-rejects every ask (the
+# deterministic CI stance); `policy: ask` prompts through the UI.
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+
+# Registries the plugin registers into.
+- id: tools
+  name: '@deepseek-ai/dsh-tools'
+
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    persona: ''
+
+# The plugin itself.
+- id: github-workflow
+  name: dsh-github-workflow
+  config:
+    apiTokenEnv: GITHUB_TOKEN
+    # baseUrl: https://api.github.com      # override for GitHub Enterprise Server
+    # readOnly: false                      # true = queries/analysis only
+    requireApprovalForMutations: true
+    # requiredTokenScopes: [repo]          # verified on every mutation (fail-closed)
+    # timeoutMs: 60000
