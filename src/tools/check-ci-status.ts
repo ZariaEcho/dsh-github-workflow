@@ -8,12 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GitHubCheckRun, ToolDeps } from '../github-client.ts'
-import { kv, section, table } from '../utils/format.ts'
-
-const TEXT_OUTPUT = {
-  schema: { type: 'string' as const },
-  render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
-}
+import { TEXT_OUTPUT, kv, section, table, truncate } from '../utils/format.ts'
 
 /** Register the tool. */
 export function registerCheckCiStatusTool(ctx: Context, deps: ToolDeps): void {
@@ -70,7 +65,7 @@ export function registerCheckCiStatusTool(ctx: Context, deps: ToolDeps): void {
         lines.push('', kv('combined status', status.state))
       }
       if (checks !== undefined) {
-        lines.push('', kv('check runs', String(checks.total_count)))
+        lines.push('', kv('check runs', String(checks.total_count) + (checks.truncated ? ' (first 300 shown)' : '')))
       }
 
       if (allChecks.length > 0) {
@@ -89,6 +84,28 @@ export function registerCheckCiStatusTool(ctx: Context, deps: ToolDeps): void {
             '',
             failing.map(check => `- ${check.name}`).join('\n'),
           )
+
+          // Annotation details for the first failing check runs (best-effort;
+          // legacy statuses carry no run id and cannot be annotated).
+          for (const check of failing.slice(0, 2)) {
+            if (check.id === undefined) continue
+            let annotations: import('../github-client.ts').GitHubAnnotation[] = []
+            try {
+              annotations = await client.listCheckRunAnnotations(args.owner, args.repo, check.id)
+            } catch {
+              annotations = []
+            }
+            if (annotations.length > 0) {
+              const rendered = annotations.slice(0, 10).map(annotation => {
+                const location = annotation.start_line !== null
+                  ? `${annotation.path}:${annotation.start_line}`
+                  : annotation.path
+                const message = truncate(annotation.message, 200)
+                return `- ${location} [${annotation.annotation_level}]: ${message}`
+              })
+              lines.push('', section(`Annotations for ${check.name}`, rendered.join('\n')))
+            }
+          }
         } else if (allChecks.every(check => check.conclusion === 'success')) {
           lines.push('', '## Overall: all checks passed')
         } else {

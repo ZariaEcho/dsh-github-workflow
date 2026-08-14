@@ -43,6 +43,19 @@ export interface Config {
    * Defaults to `[]`. Examples: `['repo']`, `['repo', 'workflow']`.
    */
   requiredTokenScopes?: string[]
+  /**
+   * TTL for the in-process repository context cache (default branch,
+   * CODEOWNERS, branch protection, PR template) in milliseconds. `0`
+   * disables the cache. Defaults to 3600000 (1 hour).
+   */
+  contextCacheTtlMs?: number
+  /**
+   * Optional JSON file for the repository context cache, so cached facts
+   * survive process restarts. Empty (default) keeps the cache in memory
+   * only. Writes are synchronous and best-effort — a failing write never
+   * breaks an operation.
+   */
+  contextCachePath?: string
 }
 
 /** Schemastery config used by the Loader for defaults and generated docs. */
@@ -53,6 +66,8 @@ export const Config: z<Config> = z.object({
   readOnly: z.boolean().default(false),
   requireApprovalForMutations: z.boolean().default(true),
   requiredTokenScopes: z.array(z.string()).default([]),
+  contextCacheTtlMs: z.number().step(1).min(0).max(86_400_000).default(3_600_000),
+  contextCachePath: z.string().default(''),
 })
 
 /** Fully resolved, validated runtime configuration. */
@@ -63,6 +78,8 @@ export interface ResolvedConfig {
   readonly readOnly: boolean
   readonly requireApprovalForMutations: boolean
   readonly requiredTokenScopes: readonly string[]
+  readonly contextCacheTtlMs: number
+  readonly contextCachePath: string
 }
 
 /** Validate and normalize the raw plugin configuration. */
@@ -73,6 +90,8 @@ export function resolveConfig(config: Config): ResolvedConfig {
   const readOnly = config.readOnly ?? false
   const requireApprovalForMutations = config.requireApprovalForMutations ?? true
   const requiredTokenScopes = [...(config.requiredTokenScopes ?? [])]
+  const contextCacheTtlMs = config.contextCacheTtlMs ?? 3_600_000
+  const contextCachePath = config.contextCachePath ?? ''
 
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(apiTokenEnv)) {
     throw new TypeError(`github-workflow: apiTokenEnv "${apiTokenEnv}" must look like an environment-variable name`)
@@ -88,5 +107,17 @@ export function resolveConfig(config: Config): ResolvedConfig {
       throw new TypeError(`github-workflow: requiredTokenScopes entry "${scope}" is not a valid GitHub scope`)
     }
   }
-  return { apiTokenEnv, baseUrl, timeoutMs, readOnly, requireApprovalForMutations, requiredTokenScopes }
+  if (!Number.isSafeInteger(contextCacheTtlMs) || contextCacheTtlMs < 0 || contextCacheTtlMs > 86_400_000) {
+    throw new TypeError('github-workflow: contextCacheTtlMs must be an integer between 0 and 86400000')
+  }
+  return {
+    apiTokenEnv,
+    baseUrl,
+    timeoutMs,
+    readOnly,
+    requireApprovalForMutations,
+    requiredTokenScopes,
+    contextCacheTtlMs,
+    contextCachePath,
+  }
 }

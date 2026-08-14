@@ -5,6 +5,12 @@
  * @module dsh-github-workflow/utils/format
  */
 
+/** Shared text-only output projection used by every tool definition. */
+export const TEXT_OUTPUT = {
+  schema: { type: 'string' as const },
+  render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
+}
+
 /** Truncate `text` to `maxChars` characters, keeping whole lines where cheap. */
 export function truncate(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text

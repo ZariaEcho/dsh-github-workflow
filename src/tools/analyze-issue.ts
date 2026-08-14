@@ -13,21 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GitHubIssue, GitHubSearchResult, ToolDeps } from '../github-client.ts'
-import {
-  bullet,
-  extractBullets,
-  extractIssueRefs,
-  firstLine,
-  kv,
-  relativeTime,
-  section,
-  truncate,
-} from '../utils/format.ts'
-
-const TEXT_OUTPUT = {
-  schema: { type: 'string' as const },
-  render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
-}
+import { TEXT_OUTPUT, bullet, extractBullets, extractIssueRefs, firstLine, kv, relativeTime, section, truncate } from '../utils/format.ts'
 
 const BODY_MAX = 4000
 const COMMENT_BODY_MAX = 600
@@ -49,7 +35,7 @@ export function registerAnalyzeIssueTool(ctx: Context, deps: ToolDeps): void {
     async execute(args, _exec) {
       const client = await deps.client()
       const issue = await client.getIssue(args.owner, args.repo, args.issueNumber)
-      const comments = await client.listIssueComments(args.owner, args.repo, args.issueNumber)
+      const commentPage = await client.listIssueComments(args.owner, args.repo, args.issueNumber)
 
       const keywords = extractKeywords(issue)
 
@@ -111,7 +97,10 @@ export function registerAnalyzeIssueTool(ctx: Context, deps: ToolDeps): void {
         }
       }
 
-      return renderAnalysis(args, issue, comments, linked, historyPrs, similar, codeRefs, client.authenticated, keywords)
+      return renderAnalysis(
+        args, issue, commentPage.items, commentPage.truncated,
+        linked, historyPrs, similar, codeRefs, client.authenticated, keywords,
+      )
     },
   }))
 }
@@ -126,6 +115,7 @@ function renderAnalysis(
   args: RenderArgs,
   issue: GitHubIssue,
   comments: Array<{ user: { login: string } | null; body: string; created_at: string }>,
+  commentsTruncated: boolean,
   linked: GitHubSearchResult | undefined,
   historyPrs: GitHubSearchResult | undefined,
   similar: GitHubSearchResult | undefined,
@@ -159,7 +149,7 @@ function renderAnalysis(
     const rendered = comments.map(comment =>
       `- @${comment.user?.login ?? 'ghost'} (${relativeTime(comment.created_at)}): ${firstLine(comment.body, COMMENT_BODY_MAX)}`,
     )
-    lines.push('', section(`Comments (${comments.length})`, rendered.join('\n')))
+    lines.push('', section(`Comments (${comments.length}${commentsTruncated ? '+ truncated' : ''})`, rendered.join('\n')))
   }
 
   if (linked !== undefined && linked.items.length > 0) {
@@ -258,9 +248,12 @@ const STOPWORDS = new Set([
 ])
 
 /**
- * Search keywords from an issue's title and body: alphanumeric tokens of
- * 4–24 chars, stopwords and pure numbers dropped, deduped, longest first.
- * Up to three keywords keep the search query tight.
+ * Search keywords from an issue's title and body. ASCII first: alphanumeric
+ * tokens of 4–24 chars, stopwords and pure numbers dropped, deduped, longest
+ * first, up to three. When no ASCII token survives (typical for CJK issues),
+ * fall back to up to two CJK phrases (2–30 consecutive Han characters) from
+ * the title and body, so similar-issue and historical-PR search still works
+ * for Chinese-language repositories.
  */
 function extractKeywords(issue: { title: string; body: string | null }): string[] {
   const seen = new Set<string>()
@@ -278,5 +271,22 @@ function extractKeywords(issue: { title: string; body: string | null }): string[
   }
   push(issue.title)
   push(issue.body ?? '')
-  return tokens.sort((a, b) => b.length - a.length).slice(0, 3)
+  if (tokens.length > 0) {
+    return tokens.sort((a, b) => b.length - a.length).slice(0, 3)
+  }
+  return collectCjkPhrases(`${issue.title} ${issue.body ?? ''}`)
+}
+
+/** Consecutive Han-character runs of 2–30 chars, deduped, up to two. */
+function collectCjkPhrases(text: string): string[] {
+  const phrases: string[] = []
+  const seen = new Set<string>()
+  for (const match of text.matchAll(/[\u4e00-\u9fff]{2,30}/g)) {
+    const phrase = match[0]
+    if (phrase === undefined || seen.has(phrase)) continue
+    seen.add(phrase)
+    phrases.push(phrase)
+    if (phrases.length >= 2) break
+  }
+  return phrases
 }

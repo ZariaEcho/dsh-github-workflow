@@ -8,12 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GitHubSearchResult, ToolDeps } from '../github-client.ts'
-import { kv, relativeTime, section } from '../utils/format.ts'
-
-const TEXT_OUTPUT = {
-  schema: { type: 'string' as const },
-  render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
-}
+import { TEXT_OUTPUT, kv, relativeTime, section } from '../utils/format.ts'
 
 /** Register the tool. */
 export function registerSearchRelatedTool(ctx: Context, deps: ToolDeps): void {

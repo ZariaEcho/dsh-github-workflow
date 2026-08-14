@@ -19,14 +19,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GitHubCompare, GitHubIssue, ToolDeps } from '../github-client.ts'
-import { diffStat, extractIssueRefs, firstLine, kv, shortSha, table } from '../utils/format.ts'
+import { cachedRepoFacts, invalidateRepo } from '../utils/cache.ts'
+import { TEXT_OUTPUT, diffStat, extractIssueRefs, firstLine, kv, shortSha, table } from '../utils/format.ts'
 import { prepareMutation } from '../utils/permission.ts'
 import { traceOperation } from '../utils/trace.ts'
-
-const TEXT_OUTPUT = {
-  schema: { type: 'string' as const },
-  render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }],
-}
 
 /** Register the tool. */
 export function registerCreateDraftPrTool(ctx: Context, deps: ToolDeps): void {
@@ -65,9 +61,17 @@ export function registerCreateDraftPrTool(ctx: Context, deps: ToolDeps): void {
         }
       }
 
-      const compare = await client.getCompare(args.owner, args.repo, base, args.head)
+      const [compare, template] = await Promise.all([
+        client.getCompare(args.owner, args.repo, base, args.head),
+        cachedRepoFacts(
+          `pr-template:${args.owner}/${args.repo}`,
+          deps.config.contextCacheTtlMs,
+          () => fetchPrTemplate(client, args.owner, args.repo),
+          deps.cacheNs,
+        ),
+      ])
       const title = resolveTitle(args, issue, compare)
-      const body = resolveBody(args, issue, compare)
+      const body = resolveBody(args, issue, compare, template)
 
       const pr = await client.createPullRequest(args.owner, args.repo, {
         title,
@@ -76,6 +80,8 @@ export function registerCreateDraftPrTool(ctx: Context, deps: ToolDeps): void {
         body,
         draft: args.draft ?? true,
       })
+
+      invalidateRepo(args.owner, args.repo, deps.cacheNs)
 
       traceOperation(ctx, exec, {
         operation: 'create_draft_pr',
@@ -94,7 +100,7 @@ export function registerCreateDraftPrTool(ctx: Context, deps: ToolDeps): void {
         kv('title', pr.title),
         kv('branch', `${pr.head.ref} → ${pr.base.ref}`),
         kv('draft', String(pr.draft)),
-        kv('description source', describeSource(args, issue)),
+        kv('description source', describeSource(args, issue, template)),
       ]
       if (pr.draft) {
         lines.push('', '> The PR is a draft. Mark it ready for review when the implementation is complete.')
@@ -104,11 +110,43 @@ export function registerCreateDraftPrTool(ctx: Context, deps: ToolDeps): void {
   }))
 }
 
-function describeSource(args: { title?: string; body?: string; issueNumber?: number }, issue: GitHubIssue | undefined): string {
+const PR_TEMPLATE_PATHS = ['.github/pull_request_template.md', 'docs/pull_request_template.md', 'pull_request_template.md']
+
+interface PrTemplate {
+  readonly path: string
+  readonly text: string
+}
+
+/** Repository PR template, first match of the three canonical locations. */
+async function fetchPrTemplate(
+  client: import('../github-client.ts').GitHubClient,
+  owner: string,
+  repo: string,
+): Promise<PrTemplate | undefined> {
+  for (const path of PR_TEMPLATE_PATHS) {
+    let text: string | undefined
+    try {
+      text = await client.getFileContentRaw(owner, repo, path)
+    } catch {
+      text = undefined
+    }
+    if (text !== undefined && text.trim().length > 0) {
+      return { path, text: text.trim() }
+    }
+  }
+  return undefined
+}
+
+function describeSource(
+  args: { title?: string; body?: string; issueNumber?: number },
+  issue: GitHubIssue | undefined,
+  template: PrTemplate | undefined,
+): string {
+  const templateNote = template !== undefined ? ` + ${template.path}` : ''
   if (args.title !== undefined && args.body !== undefined) return 'explicit title + body'
-  if (args.title !== undefined) return 'explicit title, diff-derived body'
-  if (issue !== undefined) return `issue #${issue.number}`
-  return 'base...head diff'
+  if (args.title !== undefined) return `explicit title, diff-derived body${templateNote}`
+  if (issue !== undefined) return `issue #${issue.number}${templateNote}`
+  return `base...head diff${templateNote}`
 }
 
 function resolveTitle(
@@ -128,9 +166,22 @@ function resolveBody(
   args: { body?: string; issueNumber?: number; head: string },
   issue: GitHubIssue | undefined,
   compare: GitHubCompare,
+  template: PrTemplate | undefined,
 ): string {
   if (args.body !== undefined && args.body.trim().length > 0) return args.body
 
+  const derived = buildDerivedBody(args, issue, compare)
+  if (template !== undefined) {
+    return `${template.text}\n\n---\n\n${derived}`
+  }
+  return derived
+}
+
+function buildDerivedBody(
+  args: { issueNumber?: number; head: string },
+  issue: GitHubIssue | undefined,
+  compare: GitHubCompare,
+): string {
   const latestMessage = compare.commits[0]?.commit.message ?? ''
   const latestFirstLine = latestMessage.split('\n').find(line => line.trim().length > 0)?.trim() ?? ''
 

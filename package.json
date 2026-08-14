@@ -20,8 +20,10 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node smoke.mjs"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.0"

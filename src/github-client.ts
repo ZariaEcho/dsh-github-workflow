@@ -14,6 +14,50 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { ResolvedConfig } from './config.ts'
+import type {
+  GitHubAnnotation,
+  GitHubBranchProtection,
+  GitHubCheckRun,
+  GitHubCheckRuns,
+  GitHubComment,
+  GitHubCommit,
+  GitHubCompare,
+  GitHubCreatedPullRequest,
+  GitHubIssue,
+  GitHubMergeResult,
+  GitHubPullRequest,
+  GitHubPullRequestFile,
+  GitHubRepo,
+  GitHubRequestedReviewers,
+  GitHubReview,
+  GitHubReviewComment,
+  GitHubSearchResult,
+  GitHubStatuses,
+  Paged,
+} from './types.ts'
+
+export type {
+  GitHubAnnotation,
+  GitHubBranchProtection,
+  GitHubCheckRun,
+  GitHubCheckRuns,
+  GitHubComment,
+  GitHubCommit,
+  GitHubCompare,
+  GitHubCreatedPullRequest,
+  GitHubIssue,
+  GitHubLabel,
+  GitHubMergeResult,
+  GitHubPullRequest,
+  GitHubPullRequestFile,
+  GitHubRepo,
+  GitHubRequestedReviewers,
+  GitHubReview,
+  GitHubReviewComment,
+  GitHubSearchResult,
+  GitHubStatuses,
+  GitHubUser,
+} from './types.ts'
 
 /** GitHub API version pinned on every request. */
 export const GITHUB_API_VERSION = '2022-11-28'
@@ -40,156 +84,6 @@ export class GitHubError extends Error {
     this.url = url
     this.documentationUrl = documentationUrl
   }
-}
-
-/* ── GitHub API shapes (structural, non-exhaustive) ───────────────────────── */
-
-export interface GitHubUser {
-  login: string
-}
-
-export interface GitHubLabel {
-  name: string
-}
-
-export interface GitHubIssue {
-  number: number
-  title: string
-  state: 'open' | 'closed'
-  state_reason?: string
-  body: string | null
-  user: GitHubUser | null
-  labels: GitHubLabel[]
-  milestone: { title: string } | null
-  created_at: string
-  updated_at: string
-  comments: number
-  html_url: string
-  /** Present when the "issue" is actually a pull request. */
-  pull_request?: { url: string; merged_at: string | null }
-}
-
-export interface GitHubComment {
-  id: number
-  user: GitHubUser | null
-  body: string
-  created_at: string
-  html_url: string
-}
-
-export interface GitHubRepo {
-  full_name: string
-  description: string | null
-  default_branch: string
-  language: string | null
-  stargazers_count: number
-  forks_count: number
-  open_issues_count: number
-  archived: boolean
-  topics: string[]
-  html_url: string
-}
-
-export interface GitHubPullRequest {
-  number: number
-  title: string
-  state: 'open' | 'closed'
-  draft: boolean
-  body: string | null
-  html_url: string
-  user: GitHubUser | null
-  head: { ref: string; sha: string; repo: { full_name: string } | null }
-  base: { ref: string; sha: string }
-  created_at: string
-  updated_at: string
-  merged_at: string | null
-  additions: number
-  deletions: number
-  changed_files: number
-  mergeable: boolean | null
-}
-
-export interface GitHubPullRequestFile {
-  filename: string
-  status: string
-  additions: number
-  deletions: number
-  changes: number
-  raw_url: string
-}
-
-export interface GitHubCommit {
-  sha: string
-  commit: { message: string; author: { date: string } }
-  author: GitHubUser | null
-}
-
-export interface GitHubCompare {
-  status: string
-  ahead_by: number
-  behind_by: number
-  commits: GitHubCommit[]
-  files: GitHubPullRequestFile[]
-}
-
-export interface GitHubStatuses {
-  state: 'success' | 'failure' | 'pending' | 'error'
-  total_count: number
-  statuses: Array<{
-    context: string
-    state: 'success' | 'failure' | 'pending' | 'error'
-    target_url: string | null
-    description: string | null
-    created_at: string
-  }>
-}
-
-export interface GitHubCheckRun {
-  name: string
-  status: 'queued' | 'in_progress' | 'completed'
-  conclusion: string | null
-  details_url: string
-  started_at: string | null
-  completed_at: string | null
-}
-
-export interface GitHubCheckRuns {
-  total_count: number
-  check_runs: GitHubCheckRun[]
-}
-
-export interface GitHubSearchResult {
-  total_count: number
-  items: Array<{
-    number: number
-    title: string
-    state: 'open' | 'closed'
-    html_url: string
-    created_at: string
-    updated_at: string
-    comments: number
-    user: GitHubUser | null
-    labels: GitHubLabel[]
-    pull_request?: { merged_at: string | null }
-  }>
-}
-
-export interface GitHubCreatedPullRequest {
-  number: number
-  html_url: string
-  title: string
-  draft: boolean
-  head: { ref: string }
-  base: { ref: string }
-}
-
-export interface GitHubReview {
-  id: number
-  html_url: string
-  state: string
-  body: string | null
-  submitted_at: string
-  user: GitHubUser | null
 }
 
 /** One REST request. */
@@ -225,6 +119,35 @@ export class GitHubClient {
   /** Whether an authentication token is configured for this client. */
   get authenticated(): boolean {
     return this.#token !== undefined && this.#token.length > 0
+  }
+
+  /** Default cap for paginated list endpoints. */
+  static readonly PAGINATION_CAP = 300
+  static readonly PAGINATION_PAGE_SIZE = 100
+
+  /**
+   * Walk every page of a list endpoint until the page returns short or the
+   * cap is reached. `truncated` is true only when the loop stopped at the cap
+   * with a full last page, i.e. more items may exist.
+   */
+  protected async paginate<T>(
+    path: string,
+    query: RequestOptions['query'],
+    cap: number = GitHubClient.PAGINATION_CAP,
+    perPage: number = GitHubClient.PAGINATION_PAGE_SIZE,
+  ): Promise<Paged<T>> {
+    const items: T[] = []
+    for (let page = 1; ; page += 1) {
+      const batch = await this.request<T[]>({
+        path,
+        query: { ...query, per_page: perPage, page },
+      })
+      items.push(...batch)
+      const hitCap = items.length >= cap
+      if (batch.length < perPage || hitCap) {
+        return { items, truncated: hitCap && batch.length === perPage }
+      }
+    }
   }
 
   /**
@@ -332,6 +255,7 @@ export class GitHubClient {
       } catch {
         // Non-JSON error body; keep the HTTP status message.
       }
+      message += rateLimitHint(response)
       throw new GitHubError(response.status, method, url.toString(), message, documentationUrl)
     }
     return { body, headers: response.headers, status: response.status }
@@ -347,11 +271,17 @@ export class GitHubClient {
     return this.request({ path: `/repos/${enc(owner)}/${enc(repo)}/issues/${issueNumber}` })
   }
 
-  listIssueComments(owner: string, repo: string, issueNumber: number, perPage = 100): Promise<GitHubComment[]> {
-    return this.request({
-      path: `/repos/${enc(owner)}/${enc(repo)}/issues/${issueNumber}/comments`,
-      query: { per_page: perPage },
-    })
+  listIssueComments(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    cap: number = GitHubClient.PAGINATION_CAP,
+  ): Promise<Paged<GitHubComment>> {
+    return this.paginate<GitHubComment>(
+      `/repos/${enc(owner)}/${enc(repo)}/issues/${issueNumber}/comments`,
+      {},
+      cap,
+    )
   }
 
   getPullRequest(owner: string, repo: string, pullNumber: number): Promise<GitHubPullRequest> {
@@ -367,11 +297,17 @@ export class GitHubClient {
     return this.request(options)
   }
 
-  listPullRequestFiles(owner: string, repo: string, pullNumber: number, perPage = 100): Promise<GitHubPullRequestFile[]> {
-    return this.request({
-      path: `/repos/${enc(owner)}/${enc(repo)}/pulls/${pullNumber}/files`,
-      query: { per_page: perPage },
-    })
+  listPullRequestFiles(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    cap: number = GitHubClient.PAGINATION_CAP,
+  ): Promise<Paged<GitHubPullRequestFile>> {
+    return this.paginate<GitHubPullRequestFile>(
+      `/repos/${enc(owner)}/${enc(repo)}/pulls/${pullNumber}/files`,
+      {},
+      cap,
+    )
   }
 
   listPullRequests(owner: string, repo: string, state: 'open' | 'closed' | 'all' = 'open', perPage = 30): Promise<GitHubPullRequest[]> {
@@ -397,6 +333,10 @@ export class GitHubClient {
     })
   }
 
+  getCommit(owner: string, repo: string, ref: string): Promise<GitHubCommit> {
+    return this.request({ path: `/repos/${enc(owner)}/${enc(repo)}/commits/${enc(ref)}` })
+  }
+
   getCompare(owner: string, repo: string, base: string, head: string): Promise<GitHubCompare> {
     return this.request({ path: `/repos/${enc(owner)}/${enc(repo)}/compare/${enc(base)}...${enc(head)}` })
   }
@@ -405,11 +345,30 @@ export class GitHubClient {
     return this.request({ path: `/repos/${enc(owner)}/${enc(repo)}/commits/${enc(ref)}/status` })
   }
 
-  listCheckRuns(owner: string, repo: string, ref: string, perPage = 100): Promise<GitHubCheckRuns> {
-    return this.request({
-      path: `/repos/${enc(owner)}/${enc(repo)}/commits/${enc(ref)}/check-runs`,
-      query: { per_page: perPage },
-    })
+  async listCheckRuns(
+    owner: string,
+    repo: string,
+    ref: string,
+    cap: number = GitHubClient.PAGINATION_CAP,
+  ): Promise<GitHubCheckRuns & { truncated: boolean }> {
+    const path = `/repos/${enc(owner)}/${enc(repo)}/commits/${enc(ref)}/check-runs`
+    const all: GitHubCheckRun[] = []
+    let total = 0
+    let truncated = false
+    for (let page = 1; ; page += 1) {
+      const batch = await this.request<GitHubCheckRuns>({
+        path,
+        query: { per_page: GitHubClient.PAGINATION_PAGE_SIZE, page },
+      })
+      total = batch.total_count
+      all.push(...batch.check_runs)
+      const hitCap = all.length >= cap
+      if (batch.check_runs.length < GitHubClient.PAGINATION_PAGE_SIZE || hitCap) {
+        truncated = hitCap && batch.check_runs.length === GitHubClient.PAGINATION_PAGE_SIZE
+        break
+      }
+    }
+    return { total_count: total, check_runs: all, truncated }
   }
 
   searchIssues(query: string, perPage = 8): Promise<GitHubSearchResult> {
@@ -447,6 +406,149 @@ export class GitHubClient {
       body: { body: input.body, event: input.event },
     })
   }
+
+  mergePullRequest(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    input: { mergeMethod: 'merge' | 'squash' | 'rebase'; commitTitle?: string; commitMessage?: string },
+  ): Promise<GitHubMergeResult> {
+    const body: Record<string, unknown> = { merge_method: input.mergeMethod }
+    if (input.commitTitle !== undefined) body.commit_title = input.commitTitle
+    if (input.commitMessage !== undefined) body.commit_message = input.commitMessage
+    return this.request({
+      method: 'POST',
+      path: `/repos/${enc(owner)}/${enc(repo)}/pulls/${pullNumber}/merge`,
+      body,
+    })
+  }
+
+  closeIssue(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    stateReason?: 'completed' | 'not_planned',
+  ): Promise<GitHubIssue> {
+    const body: Record<string, unknown> = { state: 'closed' }
+    if (stateReason !== undefined) body.state_reason = stateReason
+    return this.request({
+      method: 'PATCH',
+      path: `/repos/${enc(owner)}/${enc(repo)}/issues/${issueNumber}`,
+      body,
+    })
+  }
+
+  deleteBranch(owner: string, repo: string, branch: string): Promise<void> {
+    return this.request({
+      method: 'DELETE',
+      path: `/repos/${enc(owner)}/${enc(repo)}/git/refs/heads/${enc(branch)}`,
+    })
+  }
+
+  requestReviewers(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    input: { reviewers: string[]; teamReviewers?: string[] },
+  ): Promise<GitHubRequestedReviewers> {
+    const body: Record<string, unknown> = { reviewers: input.reviewers }
+    if (input.teamReviewers !== undefined && input.teamReviewers.length > 0) {
+      body.team_reviewers = input.teamReviewers
+    }
+    return this.request({
+      method: 'POST',
+      path: `/repos/${enc(owner)}/${enc(repo)}/pulls/${pullNumber}/requested_reviewers`,
+      body,
+    })
+  }
+
+  listPullRequestReviewComments(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    cap: number = GitHubClient.PAGINATION_CAP,
+  ): Promise<Paged<GitHubReviewComment>> {
+    return this.paginate<GitHubReviewComment>(
+      `/repos/${enc(owner)}/${enc(repo)}/pulls/${pullNumber}/comments`,
+      {},
+      cap,
+    )
+  }
+
+  /** Reply inside an existing review-comment thread on a pull request. */
+  replyToReviewComment(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    commentId: number,
+    body: string,
+  ): Promise<GitHubReviewComment> {
+    return this.request({
+      method: 'POST',
+      path: `/repos/${enc(owner)}/${enc(repo)}/pulls/${pullNumber}/comments`,
+      body: { body, in_reply_to: commentId },
+    })
+  }
+
+  /** Reply inside an existing issue-comment thread. */
+  replyToIssueComment(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    commentId: number,
+    body: string,
+  ): Promise<GitHubComment> {
+    return this.request({
+      method: 'POST',
+      path: `/repos/${enc(owner)}/${enc(repo)}/issues/${issueNumber}/comments`,
+      body: { body, in_reply_to: commentId },
+    })
+  }
+
+  listCheckRunAnnotations(owner: string, repo: string, checkRunId: number, perPage = 50): Promise<GitHubAnnotation[]> {
+    return this.request({
+      path: `/repos/${enc(owner)}/${enc(repo)}/check-runs/${checkRunId}/annotations`,
+      query: { per_page: perPage },
+    })
+  }
+
+  /**
+   * Raw file content via the contents API (404 → undefined). The `path` is
+   * joined with raw slashes (`path/to/file`), the documented contents-API
+   * form; only callers with fixed internal paths may use this.
+   */
+  async getFileContentRaw(owner: string, repo: string, path: string): Promise<string | undefined> {
+    try {
+      return await this.request<string>({
+        path: `/repos/${enc(owner)}/${enc(repo)}/contents/${path}`,
+        accept: 'application/vnd.github.raw',
+      })
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) return undefined
+      throw error
+    }
+  }
+
+  /** Branch protection for one branch; 404 → null (not protected). */
+  async getBranchProtection(owner: string, repo: string, branch: string): Promise<GitHubBranchProtection | null> {
+    try {
+      return await this.request<GitHubBranchProtection>({
+        path: `/repos/${enc(owner)}/${enc(repo)}/branches/${enc(branch)}/protection`,
+      })
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) return null
+      throw error
+    }
+  }
+
+  /** One GraphQL request (requires a token; the GraphQL API has no anonymous access). */
+  graphql<T = unknown>(query: string, variables: Record<string, unknown>): Promise<T> {
+    return this.request({
+      method: 'POST',
+      path: '/graphql',
+      body: { query, variables },
+    })
+  }
 }
 
 /* ── token resolution and per-call deps ───────────────────────────────────── */
@@ -471,15 +573,19 @@ export async function resolveGithubToken(ctx: Context, apiTokenEnv: string): Pro
 export interface ToolDeps {
   readonly ctx: Context
   readonly config: ResolvedConfig
+  /** Cache namespace for this mounting configuration (isolated per cache path). */
+  readonly cacheNs: string
   /** Fresh client per call: token resolves at call time through the seam. */
   readonly client: () => Promise<GitHubClient>
 }
 
 /** Build the shared per-call dependencies. */
 export function createToolDeps(ctx: Context, config: ResolvedConfig): ToolDeps {
+  const cacheNs = config.contextCachePath === '' ? 'default' : `file:${config.contextCachePath}`
   return {
     ctx,
     config,
+    cacheNs,
     async client() {
       const token = await resolveGithubToken(ctx, config.apiTokenEnv)
       const options: { baseUrl: string; timeoutMs: number; token?: string } = {
@@ -495,4 +601,34 @@ export function createToolDeps(ctx: Context, config: ResolvedConfig): ToolDeps {
 /** Encode one path segment (branch names may contain slashes). */
 function enc(value: string): string {
   return encodeURIComponent(value)
+}
+
+/**
+ * Rate-limit context for an error response, appended to the error message so
+ * the model can self-heal (wait, or tell the user to raise the quota):
+ * - `Retry-After` on 403/429 — secondary rate limit, wait that many seconds.
+ * - `x-ratelimit-remaining: 0` — quota exhausted; `x-ratelimit-reset` gives
+ *   the epoch-seconds reset time when present.
+ */
+function rateLimitHint(response: Response): string {
+  const retryAfter = response.headers.get('retry-after')
+  if (retryAfter !== null) {
+    return ` (secondary rate limit: retry after ${retryAfter}s)`
+  }
+  const remaining = response.headers.get('x-ratelimit-remaining')
+  if (remaining === '0') {
+    const reset = response.headers.get('x-ratelimit-reset')
+    if (reset !== null && /^\d+$/.test(reset)) {
+      return ` (rate limit exhausted; resets ${new Date(Number(reset) * 1000).toISOString()})`
+    }
+    return ' (rate limit exhausted)'
+  }
+  if (remaining !== null && response.status === 403) {
+    const reset = response.headers.get('x-ratelimit-reset')
+    if (reset !== null && /^\d+$/.test(reset)) {
+      return ` (rate limit: ${remaining} remaining; resets ${new Date(Number(reset) * 1000).toISOString()})`
+    }
+    return ` (rate limit: ${remaining} remaining)`
+  }
+  return ''
 }
