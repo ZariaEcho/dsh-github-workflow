@@ -1,0 +1,6 @@
+url: https://github.com/ZariaEcho/dsh-github-workflow
+name: ZariaEcho/dsh-github-workflow
+category: git
+description:
+  en: 'GitHub workflow tools for agents: issue analysis with related-PR and prior-issue context, repository-template-aware draft PRs, severity-ranked PR review with comment threads, CI status with failing-run annotations, and GraphQL merge — every mutation behind a fail-closed approval gate.'
+  zh: '面向 Agent 的 GitHub 工作流工具：带关联 PR 与历史 Issue 上下文的 Issue 分析、套用仓库模板的草稿 PR、按阻断/建议/优化分级的 PR Review（含评论线程）、带失败注解的 CI 状态与 GraphQL 合并——所有写操作走 fail-closed 审批闸口。'
