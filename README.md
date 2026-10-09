@@ -43,12 +43,24 @@
 
 ## 快速开始
 
+**一条命令安装并挂载**（推荐）：
+
 ```bash
-npm install && npm run build     # 构建
 export GITHUB_TOKEN=ghp_xxx      # 认证（经宿主 credentials 缝逐次解析）
+dsh plugin --profile web add dsh-github-workflow
 ```
 
-在 host composition 或 agent preset 中加入一行：
+包内自带 `dsh.bundle.patch`（见 [`cordis.patch.yml`](cordis.patch.yml)），CLI 会把它作为 bundle 层激活——**不需要手改 profile 文件**。装完可用 `dsh --profile web --dump-config` 验证挂载。
+
+从源码安装（开发用）：
+
+```bash
+git clone https://github.com/ZariaEcho/dsh-github-workflow && cd dsh-github-workflow
+npm install && npm run build
+dsh plugin --profile web add .
+```
+
+手动挂载（写进 host composition 或 agent preset）：
 
 ```yaml
 - id: github-workflow
@@ -57,7 +69,16 @@ export GITHUB_TOKEN=ghp_xxx      # 认证（经宿主 credentials 缝逐次解�
     requireApprovalForMutations: true   # 写操作默认需用户确认
 ```
 
-本地测试组合见 [`examples/cordis.yml`](examples/cordis.yml)（`dsh --profile <p> --patch ./examples/cordis.yml`）。
+> ⚠️ 改走 bundle 通道后，请删掉 profile 里手写的这一行，否则会重复挂载。
+> 本地测试组合见 [`examples/cordis.yml`](examples/cordis.yml)（`dsh --profile <p> --patch ./examples/cordis.yml`）。
+
+### 版本兼容（重要）
+
+`peerDependencies` 对 `@deepseek-ai/dsh-*` 声明为 `^0.1.0-rc.1 || ^0.2.0-rc.1`。
+
+DSH 在导入插件前，会用 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })` 把**每一个**声明的 DSH peer 范围与运行时版本逐一比对；只要有一个不匹配，该行就被静默禁用（变成 `disabled: true`，用户看到的现象是"装了但工具没出现"）。
+
+坑在于 `^0.1.0-rc.0` 的上界是 `<0.2.0`——**装不下运行时 `0.2.0-rc.2`**。这是 0.1.x → 0.2.x 过渡期最常见的翻车点：插件在 0.1.x 上一切正常，升级 harness 后就无声失效。这里显式并列两条版本线，同时覆盖 `0.1.x-rc` 与 `0.2.x-rc`。
 
 ## 典型流程
 

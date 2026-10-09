@@ -1,0 +1,27 @@
+# dsh-github-workflow bundle patch
+#
+# This file is the `dsh.bundle.patch` layer of the published package. When the
+# plugin is installed through the official CLI —
+#
+#   dsh plugin --profile <name> add dsh-github-workflow
+#
+# — the command reconciles `dsh.profile.bundles` against installed packages
+# and, seeing the `dsh.bundle.patch` declaration in package.json, appends
+# `dsh-github-workflow` to the bundle stack. Profile boot then merges THIS
+# patch (a single `insert` of the plugin row) exactly like a manual
+# cordis.patch.yml mount line. One command installs and mounts; no profile
+# file edits are needed.
+#
+# A package without `dsh.bundle.patch` is only an installed dependency — it is
+# never activated. That is why this file exists.
+#
+# The row carries no `config`, so the plugin's own Config defaults apply
+# (apiTokenEnv: GITHUB_TOKEN, requireApprovalForMutations: true, readOnly:
+# false). Add a `config:` block only to ship non-default settings, and note
+# that a matching override replaces the complete `config`.
+#
+# If a profile still carries a manual mount line for this plugin, remove that
+# line before switching to the bundle channel to avoid double-mounting.
+- insert:
+    - id: github-workflow
+      name: 'dsh-github-workflow'
